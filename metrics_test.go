@@ -99,11 +99,10 @@ func TestLegacyCounterUsesInt64Instrument(t *testing.T) {
 	require.Equal(t, []int64{1}, meter.int64Counters[0].adds)
 }
 
-func TestCounterDescriptorCacheSeparatesTypeAndUnit(t *testing.T) {
+func TestDescriptorCacheSeparatesTypeAndUnit(t *testing.T) {
 	meter := &recordingMeter{}
-	config, ok := metricsConfigFromOpts(meter).(*metricsConfig)
+	cfg, ok := metricsConfigFromOpts(meter).(*metricsConfig)
 	require.True(t, ok)
-	cfg := config
 
 	legacy := cfg.CounterVec("same", "label")
 	require.Same(t, legacy, cfg.CounterVec("same", "label"))
@@ -129,10 +128,15 @@ func TestCounterDescriptorCacheSeparatesTypeAndUnit(t *testing.T) {
 
 func TestDescriptorGaugeUsesSignedFloat64Adds(t *testing.T) {
 	meter := &recordingMeter{}
-	config, ok := metricsConfigFromOpts(meter).(*metricsConfig)
+	cfg := metricsConfigFromOpts(meter, WithNamespace("custom"), WithSeparator("."))
+	scoped := cfg.WithSystem("topic")
+	descriptorConfig, ok := scoped.(interface {
+		GaugeVecWithDescriptor(name, unit string, labelNames ...string) ydbmetrics.GaugeVec
+	})
 	require.True(t, ok)
-	cfg := config
-	vec := cfg.GaugeVecWithDescriptor("ydb.topic.reader.credit_balance_bytes", "By", "endpoint")
+	vec := descriptorConfig.GaugeVecWithDescriptor(
+		"ydb.topic.reader.credit_balance_bytes", "By", "endpoint",
+	)
 
 	vec.With(map[string]string{"endpoint": "node"}).Add(5)
 	vec.With(map[string]string{"endpoint": "node"}).Add(-2)
