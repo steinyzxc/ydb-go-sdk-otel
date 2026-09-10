@@ -38,8 +38,16 @@ type metricsConfig struct {
 	histograms map[metricInstrumentKey]metrics.HistogramVec
 }
 
+type metricInstrumentKind uint8
+
+const (
+	descriptorMetricInstrument metricInstrumentKind = 1
+)
+
 type metricInstrumentKey struct {
 	name       string
+	unit       string
+	kind       metricInstrumentKind
 	buckets    string
 	labelNames string
 }
@@ -123,6 +131,36 @@ func (c *metricsConfig) CounterVec(name string, labelNames ...string) metrics.Co
 	return cnt
 }
 
+func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames ...string) metrics.CounterVec {
+	key := newMetricInstrumentKey(name, "", labelNames)
+	key.unit = unit
+	key.kind = descriptorMetricInstrument
+
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	if cnt, ok := c.counters[key]; ok {
+		return cnt
+	}
+
+	counter, err := c.meter.Float64Counter(
+		name,
+		metric.WithDescription("ydb-go-sdk counter"),
+		metric.WithUnit(unit),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	cnt := &float64CounterVec{
+		counter:    counter,
+		labelNames: labelNames,
+	}
+	c.counters[key] = cnt
+
+	return cnt
+}
+
 func (c *metricsConfig) GaugeVec(name string, labelNames ...string) metrics.GaugeVec {
 	instrumentName := c.instrumentName(name)
 	key := newMetricInstrumentKey(instrumentName, "", labelNames)
@@ -137,6 +175,35 @@ func (c *metricsConfig) GaugeVec(name string, labelNames ...string) metrics.Gaug
 	upDown, err := c.meter.Float64UpDownCounter(
 		instrumentName,
 		metric.WithDescription("ydb-go-sdk gauge"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	g := &gaugeVec{
+		upDown:     upDown,
+		labelNames: labelNames,
+	}
+	c.gauges[key] = g
+
+	return g
+}
+
+func (c *metricsConfig) GaugeVecWithDescriptor(name, unit string, labelNames ...string) metrics.GaugeVec {
+	key := newMetricInstrumentKey(name, "", labelNames)
+	key.unit = unit
+
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	if g, ok := c.gauges[key]; ok {
+		return g
+	}
+
+	upDown, err := c.meter.Float64UpDownCounter(
+		name,
+		metric.WithDescription("ydb-go-sdk gauge"),
+		metric.WithUnit(unit),
 	)
 	if err != nil {
 		panic(err)
@@ -247,6 +314,31 @@ type counterMetric struct {
 
 func (c *counterMetric) Inc() {
 	c.counter.Add(context.Background(), 1, metric.WithAttributes(c.attrs...))
+}
+
+type float64CounterVec struct {
+	counter    metric.Float64Counter
+	labelNames []string
+}
+
+func (c *float64CounterVec) With(labels map[string]string) metrics.Counter {
+	return &float64CounterMetric{
+		counter: c.counter,
+		attrs:   labelsToAttributes(labels, c.labelNames),
+	}
+}
+
+type float64CounterMetric struct {
+	counter metric.Float64Counter
+	attrs   []attribute.KeyValue
+}
+
+func (c *float64CounterMetric) Inc() {
+	c.Add(1)
+}
+
+func (c *float64CounterMetric) Add(value float64) {
+	c.counter.Add(context.Background(), value, metric.WithAttributes(c.attrs...))
 }
 
 type gaugeVec struct {

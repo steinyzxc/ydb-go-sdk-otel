@@ -122,6 +122,12 @@ Additional metrics options:
 - `WithSeparator(sep)` — scope separator (default `_`)
 - `WithTimerBuckets(buckets)` — histogram buckets for timers
 
+Topic reader and listener metrics use descriptor-aware instruments when the SDK
+requests them: descriptor names are used verbatim, units are passed to
+OpenTelemetry, counters use `Float64Counter` (including batch or fractional
+`Add`), and gauges use `Float64UpDownCounter`. Legacy SDK metrics keep their
+scoped names and `Int64Counter` behavior.
+
 ### Logs
 
 ```go
