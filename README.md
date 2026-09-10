@@ -124,9 +124,16 @@ Additional metrics options:
 
 Topic reader and listener metrics use descriptor-aware instruments when the SDK
 requests them: descriptor names are used verbatim, units are passed to
-OpenTelemetry, counters use `Float64Counter` (including batch or fractional
-`Add`), and gauges use `Float64UpDownCounter`. Legacy SDK metrics keep their
-scoped names and `Int64Counter` behavior.
+OpenTelemetry, counters use `Int64Counter` (including batched `Add`), and
+gauges use `Float64UpDownCounter`. Legacy SDK metrics keep their scoped names
+and `Int64Counter` behavior.
+
+Observable instruments use genuine `Float64ObservableGauge` callbacks evaluated
+at collection time; the regular `Gauge` remains mapped to
+`Float64UpDownCounter`.
+
+Observable gauge descriptors require an SDK release that exposes
+`RegistryWithObservableGaugeDescriptors`.
 
 ### Logs
 

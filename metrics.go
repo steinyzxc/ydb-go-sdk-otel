@@ -31,23 +31,17 @@ type metricsConfig struct {
 	separator    string
 	timerBuckets []float64
 
-	m          sync.Mutex
-	counters   map[metricInstrumentKey]metrics.CounterVec
-	gauges     map[metricInstrumentKey]metrics.GaugeVec
-	timers     map[metricInstrumentKey]metrics.TimerVec
-	histograms map[metricInstrumentKey]metrics.HistogramVec
+	m                sync.Mutex
+	counters         map[metricInstrumentKey]metrics.CounterVec
+	gauges           map[metricInstrumentKey]metrics.GaugeVec
+	observableGauges map[metricInstrumentKey]metrics.ObservableGaugeVec
+	timers           map[metricInstrumentKey]metrics.TimerVec
+	histograms       map[metricInstrumentKey]metrics.HistogramVec
 }
-
-type metricInstrumentKind uint8
-
-const (
-	descriptorMetricInstrument metricInstrumentKind = 1
-)
 
 type metricInstrumentKey struct {
 	name       string
 	unit       string
-	kind       metricInstrumentKind
 	buckets    string
 	labelNames string
 }
@@ -63,14 +57,15 @@ func newMetricInstrumentKey(name, buckets string, labelNames []string) metricIns
 // metricsConfigFromOpts returns metrics registry config for OpenTelemetry instruments.
 func metricsConfigFromOpts(meter metric.Meter, opts ...metricsOption) metrics.Config {
 	cfg := &metricsConfig{
-		meter:        meterFrom(meter),
-		detailer:     trace.DetailsAll,
-		separator:    defaultMetricsSeparator,
-		timerBuckets: defaultTimerBuckets,
-		counters:     map[metricInstrumentKey]metrics.CounterVec{},
-		gauges:       map[metricInstrumentKey]metrics.GaugeVec{},
-		timers:       map[metricInstrumentKey]metrics.TimerVec{},
-		histograms:   map[metricInstrumentKey]metrics.HistogramVec{},
+		meter:            meterFrom(meter),
+		detailer:         trace.DetailsAll,
+		separator:        defaultMetricsSeparator,
+		timerBuckets:     defaultTimerBuckets,
+		counters:         map[metricInstrumentKey]metrics.CounterVec{},
+		gauges:           map[metricInstrumentKey]metrics.GaugeVec{},
+		observableGauges: map[metricInstrumentKey]metrics.ObservableGaugeVec{},
+		timers:           map[metricInstrumentKey]metrics.TimerVec{},
+		histograms:       map[metricInstrumentKey]metrics.HistogramVec{},
 	}
 	for _, opt := range opts {
 		opt.applyMetricsOption(cfg)
@@ -91,15 +86,16 @@ func (c *metricsConfig) Details() trace.Details {
 
 func (c *metricsConfig) WithSystem(subsystem string) metrics.Config {
 	return &metricsConfig{
-		meter:        c.meter,
-		detailer:     c.detailer,
-		namespace:    c.join(c.namespace, subsystem),
-		separator:    c.separator,
-		timerBuckets: c.timerBuckets,
-		counters:     map[metricInstrumentKey]metrics.CounterVec{},
-		gauges:       map[metricInstrumentKey]metrics.GaugeVec{},
-		timers:       map[metricInstrumentKey]metrics.TimerVec{},
-		histograms:   map[metricInstrumentKey]metrics.HistogramVec{},
+		meter:            c.meter,
+		detailer:         c.detailer,
+		namespace:        c.join(c.namespace, subsystem),
+		separator:        c.separator,
+		timerBuckets:     c.timerBuckets,
+		counters:         map[metricInstrumentKey]metrics.CounterVec{},
+		gauges:           map[metricInstrumentKey]metrics.GaugeVec{},
+		observableGauges: map[metricInstrumentKey]metrics.ObservableGaugeVec{},
+		timers:           map[metricInstrumentKey]metrics.TimerVec{},
+		histograms:       map[metricInstrumentKey]metrics.HistogramVec{},
 	}
 }
 
@@ -134,7 +130,6 @@ func (c *metricsConfig) CounterVec(name string, labelNames ...string) metrics.Co
 func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames ...string) metrics.CounterVec {
 	key := newMetricInstrumentKey(name, "", labelNames)
 	key.unit = unit
-	key.kind = descriptorMetricInstrument
 
 	c.m.Lock()
 	defer c.m.Unlock()
@@ -143,7 +138,7 @@ func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames .
 		return cnt
 	}
 
-	counter, err := c.meter.Float64Counter(
+	counter, err := c.meter.Int64Counter(
 		name,
 		metric.WithDescription("ydb-go-sdk counter"),
 		metric.WithUnit(unit),
@@ -152,7 +147,7 @@ func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames .
 		panic(err)
 	}
 
-	cnt := &float64CounterVec{
+	cnt := &counterVec{
 		counter:    counter,
 		labelNames: labelNames,
 	}
@@ -214,6 +209,37 @@ func (c *metricsConfig) GaugeVecWithDescriptor(name, unit string, labelNames ...
 		labelNames: labelNames,
 	}
 	c.gauges[key] = g
+
+	return g
+}
+
+func (c *metricsConfig) ObservableGaugeVecWithDescriptor(
+	name, unit string,
+	labelNames ...string,
+) metrics.ObservableGaugeVec {
+	key := newMetricInstrumentKey(name, "", labelNames)
+	key.unit = unit
+
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	if g, ok := c.observableGauges[key]; ok {
+		return g
+	}
+
+	gauge, err := c.meter.Float64ObservableGauge(
+		name,
+		metric.WithDescription("ydb-go-sdk observable gauge"),
+		metric.WithUnit(unit),
+	)
+
+	g := &observableGaugeVec{
+		meter:         c.meter,
+		gauge:         gauge,
+		instrumentErr: err,
+		labelNames:    labelNames,
+	}
+	c.observableGauges[key] = g
 
 	return g
 }
@@ -313,31 +339,10 @@ type counterMetric struct {
 }
 
 func (c *counterMetric) Inc() {
-	c.counter.Add(context.Background(), 1, metric.WithAttributes(c.attrs...))
-}
-
-type float64CounterVec struct {
-	counter    metric.Float64Counter
-	labelNames []string
-}
-
-func (c *float64CounterVec) With(labels map[string]string) metrics.Counter {
-	return &float64CounterMetric{
-		counter: c.counter,
-		attrs:   labelsToAttributes(labels, c.labelNames),
-	}
-}
-
-type float64CounterMetric struct {
-	counter metric.Float64Counter
-	attrs   []attribute.KeyValue
-}
-
-func (c *float64CounterMetric) Inc() {
 	c.Add(1)
 }
 
-func (c *float64CounterMetric) Add(value float64) {
+func (c *counterMetric) Add(value int64) {
 	c.counter.Add(context.Background(), value, metric.WithAttributes(c.attrs...))
 }
 
