@@ -3,6 +3,7 @@ package ydb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	ydbmetrics "github.com/ydb-platform/ydb-go-sdk/v3/metrics"
@@ -127,6 +128,57 @@ func TestDescriptorCacheSharesEquivalentInstruments(t *testing.T) {
 	require.NotSame(t, descriptorGaugeEmpty, cfg.GaugeVecWithDescriptor("gauge", "By", "label"))
 }
 
+func TestMetricFactoriesShareVectorDuringConcurrentCreation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		create func(*metricsConfig) any
+	}{
+		{name: "counter", create: func(c *metricsConfig) any { return c.CounterVec("metric") }},
+		{name: "descriptor counter", create: func(c *metricsConfig) any {
+			return c.CounterVecWithDescriptor("metric", "1")
+		}},
+		{name: "gauge", create: func(c *metricsConfig) any { return c.GaugeVec("metric") }},
+		{name: "descriptor gauge", create: func(c *metricsConfig) any {
+			return c.GaugeVecWithDescriptor("metric", "1")
+		}},
+		{name: "observable gauge", create: func(c *metricsConfig) any {
+			return c.ObservableGaugeVecWithDescriptor("metric", "1")
+		}},
+		{name: "timer", create: func(c *metricsConfig) any { return c.TimerVec("metric") }},
+		{name: "histogram", create: func(c *metricsConfig) any { return c.HistogramVec("metric", nil) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entered := make(chan struct{}, 2)
+			release := make(chan struct{})
+			meter := &blockingMetricMeter{beforeCreate: func() {
+				entered <- struct{}{}
+				<-release
+			}}
+			cfg, ok := metricsConfigFromOpts(meter).(*metricsConfig)
+			require.True(t, ok)
+			created := make(chan any, 2)
+			for range 2 {
+				go func() { created <- test.create(cfg) }()
+			}
+
+			// Both calls must reach OTel before either instrument has been cached.
+			for range 2 {
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					close(release)
+					t.Fatal("instrument creation blocked another factory call")
+				}
+			}
+			close(release)
+
+			first := <-created
+			require.Same(t, first, <-created)
+			require.Same(t, first, test.create(cfg))
+		})
+	}
+}
+
 func TestDescriptorGaugeUsesSignedFloat64Adds(t *testing.T) {
 	meter := &recordingMeter{}
 	cfg := metricsConfigFromOpts(meter, WithNamespace("custom"), WithSeparator("."))
@@ -216,4 +268,46 @@ func measurementValues(measurements []recordingMeasurement) []float64 {
 	}
 
 	return values
+}
+
+type blockingMetricMeter struct {
+	noop.Meter
+
+	beforeCreate func()
+}
+
+func (m *blockingMetricMeter) Int64Counter(
+	name string,
+	opts ...metric.Int64CounterOption,
+) (metric.Int64Counter, error) {
+	m.beforeCreate()
+
+	return m.Meter.Int64Counter(name, opts...)
+}
+
+func (m *blockingMetricMeter) Float64UpDownCounter(
+	name string,
+	opts ...metric.Float64UpDownCounterOption,
+) (metric.Float64UpDownCounter, error) {
+	m.beforeCreate()
+
+	return m.Meter.Float64UpDownCounter(name, opts...)
+}
+
+func (m *blockingMetricMeter) Float64ObservableGauge(
+	name string,
+	opts ...metric.Float64ObservableGaugeOption,
+) (metric.Float64ObservableGauge, error) {
+	m.beforeCreate()
+
+	return m.Meter.Float64ObservableGauge(name, opts...)
+}
+
+func (m *blockingMetricMeter) Float64Histogram(
+	name string,
+	opts ...metric.Float64HistogramOption,
+) (metric.Float64Histogram, error) {
+	m.beforeCreate()
+
+	return m.Meter.Float64Histogram(name, opts...)
 }

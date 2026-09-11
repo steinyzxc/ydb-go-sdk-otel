@@ -104,10 +104,10 @@ func (c *metricsConfig) CounterVec(name string, labelNames ...string) metrics.Co
 	key := newMetricInstrumentKey(instrumentName, "", labelNames)
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if cnt, ok := c.counters[key]; ok {
-		return cnt
+	cached, ok := c.counters[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	counter, err := c.meter.Int64Counter(
@@ -116,6 +116,12 @@ func (c *metricsConfig) CounterVec(name string, labelNames ...string) metrics.Co
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.counters[key]; ok {
+		return cached
 	}
 
 	cnt := &counterVec{
@@ -132,10 +138,10 @@ func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames .
 	key.unit = unit
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if cnt, ok := c.counters[key]; ok {
-		return cnt
+	cached, ok := c.counters[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	counter, err := c.meter.Int64Counter(
@@ -145,6 +151,12 @@ func (c *metricsConfig) CounterVecWithDescriptor(name, unit string, labelNames .
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.counters[key]; ok {
+		return cached
 	}
 
 	cnt := &counterVec{
@@ -161,10 +173,10 @@ func (c *metricsConfig) GaugeVec(name string, labelNames ...string) metrics.Gaug
 	key := newMetricInstrumentKey(instrumentName, "", labelNames)
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if g, ok := c.gauges[key]; ok {
-		return g
+	cached, ok := c.gauges[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	upDown, err := c.meter.Float64UpDownCounter(
@@ -173,6 +185,12 @@ func (c *metricsConfig) GaugeVec(name string, labelNames ...string) metrics.Gaug
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.gauges[key]; ok {
+		return cached
 	}
 
 	g := &gaugeVec{
@@ -189,10 +207,10 @@ func (c *metricsConfig) GaugeVecWithDescriptor(name, unit string, labelNames ...
 	key.unit = unit
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if g, ok := c.gauges[key]; ok {
-		return g
+	cached, ok := c.gauges[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	upDown, err := c.meter.Float64UpDownCounter(
@@ -202,6 +220,12 @@ func (c *metricsConfig) GaugeVecWithDescriptor(name, unit string, labelNames ...
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.gauges[key]; ok {
+		return cached
 	}
 
 	g := &gaugeVec{
@@ -221,10 +245,10 @@ func (c *metricsConfig) ObservableGaugeVecWithDescriptor(
 	key.unit = unit
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if g, ok := c.observableGauges[key]; ok {
-		return g
+	cached, ok := c.observableGauges[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	gauge, err := c.meter.Float64ObservableGauge(
@@ -232,6 +256,12 @@ func (c *metricsConfig) ObservableGaugeVecWithDescriptor(
 		metric.WithDescription("ydb-go-sdk observable gauge"),
 		metric.WithUnit(unit),
 	)
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.observableGauges[key]; ok {
+		return cached
+	}
 
 	g := &observableGaugeVec{
 		meter:         c.meter,
@@ -249,10 +279,10 @@ func (c *metricsConfig) TimerVec(name string, labelNames ...string) metrics.Time
 	key := newMetricInstrumentKey(instrumentName, fmt.Sprintf("%v", c.timerBuckets), labelNames)
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if t, ok := c.timers[key]; ok {
-		return t
+	cached, ok := c.timers[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	histogram, err := c.meter.Float64Histogram(
@@ -263,6 +293,12 @@ func (c *metricsConfig) TimerVec(name string, labelNames ...string) metrics.Time
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.timers[key]; ok {
+		return cached
 	}
 
 	t := &timerVec{
@@ -281,10 +317,10 @@ func (c *metricsConfig) HistogramVec(name string, buckets []float64, labelNames 
 	key := newMetricInstrumentKey(instrumentName, fmt.Sprintf("%v", histogramBuckets), labelNames)
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
-	if h, ok := c.histograms[key]; ok {
-		return h
+	cached, ok := c.histograms[key]
+	c.m.Unlock()
+	if ok {
+		return cached
 	}
 
 	histogram, err := c.meter.Float64Histogram(
@@ -294,6 +330,12 @@ func (c *metricsConfig) HistogramVec(name string, buckets []float64, labelNames 
 	)
 	if err != nil {
 		panic(err)
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+	if cached, ok := c.histograms[key]; ok {
+		return cached
 	}
 
 	h := &histogramVec{

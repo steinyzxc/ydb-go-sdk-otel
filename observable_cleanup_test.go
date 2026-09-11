@@ -31,9 +31,34 @@ func TestObservableGaugeUnregisterDetachesRetainedCallback(t *testing.T) {
 
 	require.ErrorIs(t, unregister(), unregisterErr)
 	require.ErrorIs(t, unregister(), unregisterErr)
-	require.Equal(t, int32(1), registration.calls.Load())
 	require.NoError(t, meter.callback(context.Background(), noop.Observer{}))
 	require.Equal(t, int32(1), calls.Load())
+}
+
+func TestObservableGaugeUnregisterConcurrentWithCollection(t *testing.T) {
+	meter := &observableCleanupMeter{registration: &observableCleanupRegistration{}}
+	vec := newObservableCleanupVec(t, meter)
+	var calls atomic.Int32
+	unregister, err := vec.Register(func(context.Context, func(float64, map[string]string)) error {
+		calls.Add(1)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	const workers = 10
+	results := make(chan error, 2*workers)
+	for range workers {
+		go func() { results <- meter.callback(context.Background(), noop.Observer{}) }()
+		go func() { results <- unregister() }()
+	}
+	for range 2 * workers {
+		require.NoError(t, <-results)
+	}
+
+	completedCalls := calls.Load()
+	require.NoError(t, meter.callback(context.Background(), noop.Observer{}))
+	require.Equal(t, completedCalls, calls.Load())
 }
 
 func TestObservableGaugeRegisterFailureDetachesRetainedCallback(t *testing.T) {

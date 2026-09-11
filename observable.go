@@ -65,17 +65,11 @@ func (g *observableGaugeVec) Register(callback metrics.ObservableGaugeCallback) 
 		return nil, errNilObservableGaugeRegistration
 	}
 
-	var once sync.Once
-	var unregisterErr error
-
 	return func() error {
-		once.Do(func() {
-			callbackMu.Lock()
-			registeredCallback = nil
-			callbackMu.Unlock()
-			unregisterErr = otelRegistration.Unregister()
-		})
+		callbackMu.Lock()
+		registeredCallback = nil
+		callbackMu.Unlock()
 
-		return unregisterErr
+		return otelRegistration.Unregister()
 	}, nil
 }
